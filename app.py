@@ -2,29 +2,35 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-st.set_page_config(page_title="Analiza MKFP: Enea vs Tauron", layout="wide")
+st.set_page_config(page_title="System MKFP: Enea vs Tauron", layout="wide")
 st.title("⚡ Monitoring Kondycji Finansowej: Enea vs Tauron")
-st.markdown("Projekt MKFP 2025/2026 - Analiza Porównawcza Sektora Energetycznego")
 
-uploaded_files = st.sidebar.file_uploader("Wgraj sprawozdania Enei i Tauronu (XLSX/CSV)", accept_multiple_files=True)
+uploaded_files = st.sidebar.file_uploader("Wgraj sprawozdania (XLSX/CSV)", accept_multiple_files=True)
+
+# Funkcja pomocnicza do szukania wierszy po słowach kluczowych
+def find_row_by_keyword(df, keyword):
+    for idx in df.index:
+        if isinstance(idx, str) and keyword.lower() in idx.lower():
+            return idx
+    return None
 
 def process_data(file):
     try:
-        # Odczyt danych z uwzględnieniem struktury Twoich plików
         df = pd.read_csv(file, index_col=0) if file.name.endswith('.csv') else pd.read_excel(file, index_col=0)
-        
-        # Wykrywanie spółki
         name = "Enea" if "enea" in file.name.lower() else "Tauron"
         
-        # Mapowanie konkretnych nazw wierszy z Twoich plików
-        data_map = {
-            'Przychody': '    Przychody netto ze sprzedaży ',
-            'Zysk Netto': '    Zysk netto (strata netto)',
-            'Aktywa Obrotowe': '        Aktywa obrotowe',
-            'Zobowiazania KT': '            Zobowiązania Krótkoterminowe',
-            'Zapasy': '            Zapasy'
-        }
-        
+        # Dynamiczne szukanie wierszy w Twoich plikach
+        row_przychody = find_row_by_keyword(df, "Przychody netto ze sprzedaży")
+        row_zysk = find_row_by_keyword(df, "Zysk netto (strata netto)")
+        row_aktywa = find_row_by_keyword(df, "Aktywa obrotowe")
+        row_zobowiazania = find_row_by_keyword(df, "Zobowiązania Krótkoterminowe")
+        row_zapasy = find_row_by_keyword(df, "Zapasy")
+
+        if not row_przychody:
+            st.error(f"Nie znaleziono wiersza z Przychodami w {file.name}")
+            return None
+
+        # Wybieramy tylko kolumny z latami
         years = [col for col in df.columns if str(col).isdigit() or '20' in str(col)]
         
         extracted = []
@@ -32,16 +38,15 @@ def process_data(file):
             extracted.append({
                 'Rok': year,
                 'Spółka': name,
-                'Przychody': pd.to_numeric(df.loc[data_map['Przychody'], year], errors='coerce'),
-                'Zysk Netto': pd.to_numeric(df.loc[data_map['Zysk Netto'], year], errors='coerce'),
-                'Aktywa Obrotowe': pd.to_numeric(df.loc[data_map['Aktywa Obrotowe'], year], errors='coerce'),
-                'Zobowiazania KT': pd.to_numeric(df.loc[data_map['Zobowiazania KT'], year], errors='coerce'),
-                'Zapasy': pd.to_numeric(df.loc[data_map['Zapasy'], year], errors='coerce')
+                'Przychody': pd.to_numeric(df.loc[row_przychody, year], errors='coerce'),
+                'Zysk Netto': pd.to_numeric(df.loc[row_zysk, year], errors='coerce') if row_zysk else 0,
+                'Aktywa Obrotowe': pd.to_numeric(df.loc[row_aktywa, year], errors='coerce') if row_aktywa else 0,
+                'Zobowiazania KT': pd.to_numeric(df.loc[row_zobowiazania, year], errors='coerce') if row_zobowiazania else 0,
+                'Zapasy': pd.to_numeric(df.loc[row_zapasy, year], errors='coerce') if row_zapasy else 0
             })
-        
         return pd.DataFrame(extracted)
     except Exception as e:
-        st.error(f"Problem z plikiem {file.name}: {e}")
+        st.error(f"Błąd krytyczny w {file.name}: {e}")
         return None
 
 if uploaded_files:
@@ -52,24 +57,16 @@ if uploaded_files:
     
     if results:
         full_df = pd.concat(results).sort_values('Rok')
-        
-        # Obliczenia wskaźników
         full_df['CR'] = (full_df['Aktywa Obrotowe'] / full_df['Zobowiazania KT']).round(2)
         full_df['QR'] = ((full_df['Aktywa Obrotowe'] - full_df['Zapasy']) / full_df['Zobowiazania KT']).round(2)
         full_df['ROS (%)'] = (full_df['Zysk Netto'] / full_df['Przychody'] * 100).round(2)
 
-        t1, t2, t3 = st.tabs(["Płynność (16.III)", "Rentowność (23.III)", "Upadłość (27.IV)"])
-
+        t1, t2 = st.tabs(["Płynność (16.III)", "Rentowność (23.III)"])
         with t1:
-            st.header("Wskaźniki Płynności")
+            st.header("Płynność: Enea vs Tauron")
             c1, c2 = st.columns(2)
-            c1.plotly_chart(px.line(full_df, x='Rok', y='CR', color='Spółka', markers=True, title="Bieżąca (CR)"))
-            c2.plotly_chart(px.line(full_df, x='Rok', y='QR', color='Spółka', markers=True, title="Szybka (QR)"))
-
+            c1.plotly_chart(px.line(full_df, x='Rok', y='CR', color='Spółka', markers=True, title="Wskaźnik Bieżący"))
+            c2.plotly_chart(px.line(full_df, x='Rok', y='QR', color='Spółka', markers=True, title="Wskaźnik Szybki"))
         with t2:
-            st.header("Rentowność Sprzedaży")
+            st.header("Rentowność Sprzedaży (ROS)")
             st.plotly_chart(px.bar(full_df, x='Rok', y='ROS (%)', color='Spółka', barmode='group'))
-            
-        with t3:
-            st.header("Analiza Zagrożenia Upadłością")
-            st.info("Zgodnie z harmonogramem (27.IV), modele zostaną zaimplementowane po konsultacjach.")
